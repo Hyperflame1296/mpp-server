@@ -146,3 +146,4 @@ dist/
 /run.ps1
 /userDatabase.json
 /userRanks.json
+/test.js
