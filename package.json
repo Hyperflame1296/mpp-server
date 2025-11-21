@@ -1,0 +1,39 @@
+{
+    "name": "mpp-server",
+    "version": "0.1.0-alpha.rev0",
+    "description": "i decided to make an mpp server, for fun ig",
+    "keywords": [
+        "mpp",
+        "piano",
+        "server",
+        "websocket"
+    ],
+    "homepage": "https://github.com/Hyperflame1296/mpp-server#readme",
+    "bugs": {
+        "url": "https://github.com/Hyperflame1296/mpp-server/issues"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Hyperflame1296/mpp-server.git"
+    },
+    "license": "ISC",
+    "author": "TensiveYT",
+    "type": "module",
+    "main": "dist/index.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "devDependencies": {
+        "@types/jsonwebtoken": "^9.0.10",
+        "@types/node": "^24.10.1",
+        "@types/ws": "^8.18.1",
+        "typescript": "^5.9.3"
+    },
+    "dependencies": {
+        "bufferutil": "^4.0.9",
+        "cli-color": "^2.0.4",
+        "jsonwebtoken": "^9.0.2",
+        "uuid": "^13.0.0",
+        "ws": "^8.18.3"
+    }
+}
