@@ -3,10 +3,10 @@ interface ChannelSettings {
     chat: boolean
     color: string
     color2: string
-    crownsolo: boolean
+    crownsolo?: boolean
     limit: number
-    lobby: boolean
-    'no cussing': boolean
+    lobby?: boolean
+    'no cussing'?: boolean
     noindex: boolean
     visible: boolean
 }
