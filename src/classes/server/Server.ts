@@ -157,8 +157,12 @@ class Server {
     clients: Client[] = []
     constructor(options?: ServerOptions) {
         this.options.lobbies      = options?.lobbies      ?? ['lobby', 'test/awkward']
-        this.options.useJwt       = options?.useJwt       ?? true
-        this.options.jwtSecret    = options?.jwtSecret    ?? 'e8wbn49najg8a8gj8hi7bg7a18f5bo9a'
+        this.options.tokens = {
+            type: options?.tokens?.type ?? 'jwt',
+            jwt: {
+                secret: options?.tokens?.jwt?.secret ?? 'e8wbn49najg8a8gj8hi7bg7a18f5bo9a'
+            }
+        }
         this.options.paths = {
             userDB       : options?.paths?.userDB        ?? './userDatabase.json',
             userModifiers: options?.paths?.userModifiers ?? './userModifiers.json'
@@ -341,7 +345,7 @@ class Server {
             sub: _id, 
             iat: Math.trunc(time / 1000) 
         }
-        return jwt.sign(payload, this.options.jwtSecret, { algorithm: 'HS256' });
+        return jwt.sign(payload, this.options.tokens.jwt.secret, { algorithm: 'HS256' });
     }
     handleServerCommand(msg: DirectMessage) {
         let client = this.findClientById(msg.sender._id)
@@ -400,7 +404,7 @@ class Server {
             )
         },
         jwtToken: (code: string) => {
-            return util.validateJwtToken(code, this.options.jwtSecret)
+            return util.validateJwtToken(code, this.options.tokens.jwt.secret)
         }
     }
     init() {
@@ -485,16 +489,14 @@ class Server {
                         case 'hi':
                             if (!this.validate.connectionCode(msg.code))
                                 ws.close()
-
                             if (msg.token) {
-                                let tokenType = this.detectTokenType(msg.token)
-                                let isValidToken = tokenType === 'legacy' ? this.validate.legacyToken(msg.token) : this.validate.jwtToken(msg.token)
+                                let isValidToken = this.options.tokens.type === 'legacy' ? this.validate.legacyToken(msg.token) : this.validate.jwtToken(msg.token)
                                 if (isValidToken) {
                                     let u = this.findParticipantByToken(msg.token)
                                     if (u) {
                                         client.sendArray([{
                                             m: 'hi',
-                                            motd: 'welcome',
+                                            motd: 'This site makes a lot of sound! You may want to adjust the volume before continuing.',
                                             t: Date.now(),
                                             u,
                                         }]);
@@ -520,7 +522,7 @@ class Server {
                                     _id,
                                     id: _id
                                 }
-                                if (this.options.useJwt) {
+                                if (this.options.tokens.type === 'jwt') {
                                     let token = this.generateJwtToken(_id, Date.now());
                                     client.token = token
                                     client.participantId = _id
@@ -533,13 +535,13 @@ class Server {
                                     client.userQuota  .max *= this.modifiers[msg.token]?.quota?.user   ?? 1
                                     client.sendArray([{
                                         m: 'hi',
-                                        motd: 'welcome',
+                                        motd: 'This site makes a lot of sound! You may want to adjust the volume before continuing.',
                                         t: Date.now(),
                                         token,
                                         u,
                                     }])
                                     this.setUser(token, u)
-                                } else {
+                                } else if (this.options.tokens.type === 'legacy') {
                                     let token = _id + '.' + crypto.randomUUID({ disableEntropyCache: true });
                                     client.token = token
                                     client.participantId = _id
@@ -552,7 +554,7 @@ class Server {
                                     client.userQuota  .max *= this.modifiers[msg.token]?.quota?.user   ?? 1
                                     client.sendArray([{
                                         m: 'hi',
-                                        motd: 'welcome',
+                                        motd: 'This site makes a lot of sound! You may want to adjust the volume before continuing.',
                                         t: Date.now(),
                                         token,
                                         u,

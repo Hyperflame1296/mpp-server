@@ -1,17 +1,32 @@
 interface ServerOptions {
     /**
-     * Lobby list.
+     * Lobby room list.
      * - These lobbies cannot be removed.
      */
     lobbies?: string[]
     /**
-     * Whether or not to use JWT tokens when possible. 
+     * Settings for account tokens.
      */
-    useJwt?: boolean
-    /**
-     * The encryption secret to use for JWT tokens.
-     */
-    jwtSecret?: string
+    tokens?: {
+        /**
+         * Different types for the structure of an MPP token
+         * - `jwt` - use JSON Web Tokens for the server.
+         * - `legacy` - use legacy MPP tokens for the server.
+         * - `none` - Don't use tokens.
+         * @default 'jwt'
+         */
+        type?: 'jwt' | 'legacy'
+        /**
+         * Settings for the JWT tokens.
+         */
+        jwt?: {
+            /**
+             * The JWT secret.
+             * @default 'e8wbn49najg8a8gj8hi7bg7a18f5bo9a'
+             */
+            secret?: string
+        }
+    }
     /**
      * File directories for server data.
      */
