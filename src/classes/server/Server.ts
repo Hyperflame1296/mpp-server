@@ -510,10 +510,10 @@ class Server {
                                         client.user = u
 
                                         // apply modifiers!
-                                        client.modifier         = this.modifiers[msg.token]
-                                        client.chatQuota  .max *= this.modifiers[msg.token].quota?.chat   ?? 1
-                                        client.cursorQuota.max *= this.modifiers[msg.token].quota?.cursor ?? 1
-                                        client.userQuota  .max *= this.modifiers[msg.token].quota?.user   ?? 1
+                                        client.modifier         = this.modifiers[msg.token] ?? {}
+                                        client.chatQuota  .max *= this.modifiers[msg.token]?.quota?.chat   ?? 1
+                                        client.cursorQuota.max *= this.modifiers[msg.token]?.quota?.cursor ?? 1
+                                        client.userQuota  .max *= this.modifiers[msg.token]?.quota?.user   ?? 1
                                         continue
                                     }
                                 }
@@ -534,10 +534,10 @@ class Server {
                                     client.user = u
 
                                     // apply modifiers!
-                                    client.modifier         = this.modifiers[msg.token]
-                                    client.chatQuota  .max *= this.modifiers[msg.token].quota?.chat   ?? 1
-                                    client.cursorQuota.max *= this.modifiers[msg.token].quota?.cursor ?? 1
-                                    client.userQuota  .max *= this.modifiers[msg.token].quota?.user   ?? 1
+                                    client.modifier         = this.modifiers[msg.token] ?? {}
+                                    client.chatQuota  .max *= this.modifiers[msg.token]?.quota?.chat   ?? 1
+                                    client.cursorQuota.max *= this.modifiers[msg.token]?.quota?.cursor ?? 1
+                                    client.userQuota  .max *= this.modifiers[msg.token]?.quota?.user   ?? 1
                                     client.sendArray([{
                                         m: 'hi',
                                         motd: 'welcome',
@@ -553,10 +553,10 @@ class Server {
                                     client.user = u
 
                                     // apply modifiers!
-                                    client.modifier         = this.modifiers[msg.token]
-                                    client.chatQuota  .max *= this.modifiers[msg.token].quota?.chat   ?? 1
-                                    client.cursorQuota.max *= this.modifiers[msg.token].quota?.cursor ?? 1
-                                    client.userQuota  .max *= this.modifiers[msg.token].quota?.user   ?? 1
+                                    client.modifier         = this.modifiers[msg.token] ?? {}
+                                    client.chatQuota  .max *= this.modifiers[msg.token]?.quota?.chat   ?? 1
+                                    client.cursorQuota.max *= this.modifiers[msg.token]?.quota?.cursor ?? 1
+                                    client.userQuota  .max *= this.modifiers[msg.token]?.quota?.user   ?? 1
                                     client.sendArray([{
                                         m: 'hi',
                                         motd: 'welcome',
