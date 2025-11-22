@@ -34,7 +34,6 @@
         "bufferutil": "^4.0.9",
         "cli-color": "^2.0.4",
         "jsonwebtoken": "^9.0.2",
-        "uuid": "^13.0.0",
         "ws": "^8.18.3"
     }
 }

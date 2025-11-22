@@ -11,7 +11,6 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import color from 'cli-color'
 import jwt from 'jsonwebtoken'
-import * as uuid from 'uuid'
 
 // import: local constants
 import { util } from '../../modules/util.js'
@@ -222,14 +221,6 @@ class Server {
     findRankByToken(token: string) {
         return this.ranks[token] ?? 0
     }
-    generateHexCode(numDigits: number) {
-        let res = ''
-        let chars = '0123456789abcdef'
-        for (let i = 0; i < numDigits; i++) {
-            res += chars[Math.floor(Math.random() * chars.length)]
-        }
-        return res
-    }
     setUser(token: string, data: any) {
         let input = JSON.parse(fs.readFileSync(this.options.userDataPath, 'utf-8'))
         let output = structuredClone(input)
@@ -401,7 +392,7 @@ class Server {
             return (
                 /^[0-9a-f]+$/.test(sections[0]) &&
                 sections[0].length == 24 &&
-                uuid.validate(sections[1])
+                util.isUUIDv4(sections[1])
             )
         },
         jwtToken: (code: string) => {
@@ -510,10 +501,10 @@ class Server {
                                 }
                             }
                             { // generate a new token
-                                let _id = this.generateHexCode(24)
+                                let _id = crypto.randomBytes(12).toString('hex')
                                 let u = {
                                     afk: false,
-                                    color: '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0'),
+                                    color: '#' + crypto.randomBytes(3).toString('hex'),
                                     name: 'Anonymous',
                                     _id,
                                     id: _id
@@ -532,7 +523,7 @@ class Server {
                                     }])
                                     this.setUser(token, u)
                                 } else {
-                                    let token = _id + '.' + uuid.v4();
+                                    let token = _id + '.' + crypto.randomUUID({ disableEntropyCache: true });
                                     client.token = token
                                     client.participantId = _id
                                     client.user = u
@@ -611,7 +602,7 @@ class Server {
                                 let message: ChatMessage = {
                                     m: 'a',
                                     a: msg.message,
-                                    id: Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0'),
+                                    id: crypto.randomBytes(4).toString('hex'),
                                     p: client.user,
                                     t: Date.now(),
                                 }
@@ -622,7 +613,7 @@ class Server {
                                 let dm: DirectMessage = {
                                     m: 'dm',
                                     a: msg.message,
-                                    id: Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0'),
+                                    id: crypto.randomBytes(4).toString('hex'),
                                     sender: client.user,
                                     recipient: this.serverParticipant,
                                     t: Date.now(),
@@ -640,7 +631,7 @@ class Server {
                             let recipient = this.findClientById(msg._id)
                             if (recipient.channel !== client.channel)
                                 continue
-                            let r = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0')
+                            let r = crypto.randomBytes(4).toString('hex')
                             let dm: DirectMessage = {
                                 m: 'dm',
                                 a: msg.message,
