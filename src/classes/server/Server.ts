@@ -1,6 +1,11 @@
 // import: classes
 import { WebSocket, WebSocketServer } from 'ws'
 
+// import: local classes
+import { Client } from '../client/Client.js'
+import { EventLimiter } from '../ratelimit/EventLimiter.js'
+import { NoteQuota } from '../ratelimit/NoteQuota.js'
+
 // import: constants
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -19,16 +24,38 @@ import { ServerOptions } from '../../interfaces/server/ServerOptions.js'
 import { DirectMessage } from '../../interfaces/chat/DirectMessage.js'
 import { ServerCommand } from '../../interfaces/server/ServerCommand.js'
 import { NoteQuotaParams } from '../../interfaces/ratelimit/NoteQuotaParams.js'
-import { NoteQuota } from '../ratelimit/NoteQuota.js'
 import { Vector2 } from '../../interfaces/math/Vector2.js'
 
 // code
 class Server {
+    /**
+     * The actual WebSocket server.
+     */
     wss: WebSocketServer = null
+    /**
+     * Server options.
+     */
     options: ServerOptions = {}
+    /**
+     * The participant list.
+     */
     liveUsers: Record<string, Participant> = {}
     /**
-     * The settings for each channel
+     * Class logging methods.
+     */
+    #logging: Record<string, (text: string) => void> = {
+        info: text => {
+            return console.log(`[${color.cyanBright('INFO')}] - ${color.whiteBright('Server.ts')} - ${color.whiteBright(text)}`)
+        },
+        warn: text => {
+            return console.log(`[${color.yellowBright('WARNING')}] - ${color.whiteBright('Server.ts')} - ${color.whiteBright(text)}`)
+        },
+        error: text => {
+            return console.log(`[${color.redBright('ERROR')}] - ${color.whiteBright('Server.ts')} - ${color.whiteBright(text)}`)
+        }
+    }
+    /**
+     * The settings for each channel.
      */
     channelSettings: Channel[] = []
     /**
@@ -40,20 +67,6 @@ class Server {
      */
     initialized: boolean = false
     /**
-     * Server logging methods.
-     */
-    logging: Record<string, (text: string) => void> = {
-        info: text => {
-            return console.log(`[${color.cyanBright('INFO')}] - ${color.whiteBright(text)}`)
-        },
-        warn: text => {
-            return console.log(`[${color.yellowBright('WARNING')}] - ${color.whiteBright(text)}`)
-        },
-        error: text => {
-            return console.log(`[${color.redBright('ERROR')}] - ${color.whiteBright(text)}`)
-        }
-    }
-    /**
      * Server commands.  
      * - Use these in MPP chat by typing the command name with `^` at the beginning.
      */
@@ -62,7 +75,7 @@ class Server {
             {
                 name: 'js',
                 aliases: ['eval'],
-                func: (a: string[], input: string, msg: DirectMessage, ws: WebSocket) => {
+                func: (a: string[], input: string, msg: DirectMessage, client: Client) => {
                     let str = 'unknown type'
                     let res = eval(input)
 					switch (typeof res) {
@@ -90,30 +103,30 @@ class Server {
 							str = 'unknown type'
 							break
 					}
-					this.sendServerMessage(ws, `\`\`\`${str}\`\`\``)
+					client.serverMessage(`\`\`\`${str}\`\`\``, msg.id)
                 }
             },
             {
                 name: 'rank',
                 aliases: [],
-                func: (a: string[], input: string, msg: DirectMessage, ws: WebSocket) => {
-                    let rank = this.findRankByToken((ws as any).clientData.token)
-					this.sendServerMessage(ws, `Your current rank is: \`${rank}\`.`)
+                func: (a: string[], input: string, msg: DirectMessage, client: Client) => {
+                    let rank = this.findRankByToken(client.token)
+					client.serverMessage(`Your current rank is: \`${rank}\`.`, msg.id)
                 }
             },
             {
                 name: 'setrank',
                 aliases: [],
-                func: (a: string[], input: string, msg: DirectMessage, ws: WebSocket) => {
+                func: (a: string[], input: string, msg: DirectMessage, client: Client) => {
                     let rank = Number.parseInt(input.trim())
                     if (Number.isNaN(rank))
-                        return this.sendServerMessage(ws, `\`\`\`${input.trim()}\`\`\` is not a valid number.`)
+                        return client.serverMessage(`\`\`\`${input.trim()}\`\`\` is not a valid number.`, msg.id)
                     if (rank < 0 || rank > 3)
-                        return this.sendServerMessage(ws, `\`${input.trim()}\` is not a valid rank.`)
-                    if (rank > this.findRankByToken((ws as any).clientData.token))
-                        return this.sendServerMessage(ws, `You cannot set yourself to a higher rank.`)
-                    this.setRank((ws as any).clientData.token, rank)
-					this.sendServerMessage(ws, `Your rank has been set to \`${rank}\`.`)
+                        return client.serverMessage(`\`${input.trim()}\` is not a valid rank.`, msg.id)
+                    if (rank > this.findRankByToken(client.token))
+                        return client.serverMessage(`You cannot set yourself to a higher rank.`, msg.id)
+                    this.setRank(client.token, rank)
+					client.serverMessage(`Your rank has been set to \`${rank}\`.`, msg.id)
                 }
             }
         ]
@@ -134,26 +147,20 @@ class Server {
         id: 'server',
         _id: 'server'
     }
+    /**
+     * All currently connected clients.
+     */
+    clients: Client[] = []
     constructor(options?: ServerOptions) {
-        this.options.lobbies   = options?.lobbies   ?? ['lobby', 'test/awkward']
-        this.options.useJwt    = options?.useJwt    ?? true
-        this.options.jwtSecret = options?.jwtSecret ?? 'e8wbn49najg8a8gj8hi7bg7a18f5bo9a'
-    }
-    sendServerMessage(ws: WebSocket, message: string, reply_to?: string) {
-        let dm: DirectMessage = {
-            m: 'dm',
-            a: message,
-            id: Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0'),
-            sender: this.serverParticipant,
-            recipient: this.findParticipantByToken((ws as any).clientData.token),
-            t: Date.now(),
-        }
-        reply_to ? dm.r = reply_to : void 0
-        this.sendArrayTo(ws, dm)
+        this.options.lobbies      = options?.lobbies      ?? ['lobby', 'test/awkward']
+        this.options.useJwt       = options?.useJwt       ?? true
+        this.options.jwtSecret    = options?.jwtSecret    ?? 'e8wbn49najg8a8gj8hi7bg7a18f5bo9a'
+        this.options.userDataPath = options?.userDataPath ?? './userDatabase.json'
+        this.options.userRankPath = options?.userRankPath ?? './userRanks.json'
     }
     handleServerCommand(msg: DirectMessage) {
-        let ws = this.findClientById(msg.sender._id)
-        if (!ws || !(ws as any).clientData.token)
+        let client = this.findClientById(msg.sender._id)
+        if (!client || !client.token)
             return
         try {
             let prefix = '^'
@@ -164,17 +171,17 @@ class Server {
 				let command = this.findServerCommand(b.replace(prefix, ''))
 				if (command) {
 					try {
-                        if (this.findRankByToken((ws as any).clientData.token) >= 2)
-						    command.func(a, input, msg, ws)
+                        if (this.findRankByToken(client.token) >= 2)
+						    command.func(a, input, msg, client)
                         else
-                            this.sendServerMessage(ws, `You don't have permission to use that command.`, msg.id)
+                            client.serverMessage(`You don't have permission to use that command.`, msg.id)
 					} catch (err) {
-						this.sendServerMessage(ws, `\`\`\`${err}\`\`\``, msg.id)
+						client.serverMessage(`\`\`\`${err}\`\`\``, msg.id)
 					}
-				} else this.sendServerMessage(ws, `This command doesn\'t exist.`, msg.id)
+				} else client.serverMessage(`This command doesn\'t exist.`, msg.id)
 			}
 		} catch (err) {
-			this.sendServerMessage(ws, `\`\`\`${err}\`\`\``, msg.id)
+			client.serverMessage(`\`\`\`${err}\`\`\``, msg.id)
 		}
     }
     findServerCommand(name: string): ServerCommand {
@@ -187,26 +194,21 @@ class Server {
 		}
 		return command
 	}
-    sendArray(exclusions: WebSocket[], ...data: object[]) {
+    sendGlobalArray(exclusions: Client[], data: any[]) {
         if (!this.wss)
             return
-        for (let ws of this.wss.clients) {
-            if (exclusions.includes(ws))
+        for (let client of this.clients) {
+            if (exclusions.includes(client))
                 continue
-            ws.send(JSON.stringify(data))
+            client.sendArray(data)
         }
     }
-    sendArrayChannel(exclusions: WebSocket[], channel: string, ...data: object[]) {
-        for (let ws of [...this.wss.clients].filter(ws => (ws as any).clientData.channel == channel)) {
-            if (exclusions.includes(ws))
+    sendArrayChannel(exclusions: Client[], channel: string, data: object[]) {
+        for (let client of this.clients.filter(client => client.channel == channel)) {
+            if (exclusions.includes(client))
                 continue
-            ws.send(JSON.stringify(data))
+            client.send(JSON.stringify(data))
         }
-    }
-    sendArrayTo(ws: WebSocket, ...data: object[]) {
-        if (!this.wss)
-            return
-        ws.send(JSON.stringify(data))
     }
     findParticipantById(id: string): Participant {
         return Object.values(this.liveUsers).find(u => u._id === id)
@@ -215,7 +217,7 @@ class Server {
         return this.liveUsers[token]
     }
     findClientById(_id: string) {
-        return [...this.wss.clients].find((ws: WebSocket) => this.findParticipantByToken((ws as any).clientData.token)._id === _id)
+        return this.clients.find((client: Client) => client.participantId === _id)
     }
     findRankByToken(token: string) {
         return this.ranks[token] ?? 0
@@ -229,7 +231,7 @@ class Server {
         return res
     }
     setUser(token: string, data: any) {
-        let input = JSON.parse(fs.readFileSync('./userDatabase.json', 'utf-8'))
+        let input = JSON.parse(fs.readFileSync(this.options.userDataPath, 'utf-8'))
         let output = structuredClone(input)
         switch (this.findRankByToken(token)) {
             case 0:
@@ -263,10 +265,10 @@ class Server {
         if (this.liveUsers[token])
             Object.assign(this.liveUsers[token], data)
         else this.liveUsers[token] = data as Participant
-        fs.writeFileSync('./userDatabase.json', JSON.stringify(output), 'utf-8')
+        fs.writeFileSync(this.options.userDataPath, JSON.stringify(output), 'utf-8')
     }
     updateRanks() {
-        let input = JSON.parse(fs.readFileSync('./userDatabase.json', 'utf-8'))
+        let input = JSON.parse(fs.readFileSync(this.options.userDataPath, 'utf-8'))
         let output = structuredClone(input)
         let data: any = {}
         for (let token in output) {
@@ -299,30 +301,29 @@ class Server {
             Object.assign(output[token], data)
             Object.assign(this.liveUsers[token], data)
         }
-        fs.writeFileSync('./userDatabase.json', JSON.stringify(output), 'utf-8')
+        fs.writeFileSync(this.options.userDataPath, JSON.stringify(output), 'utf-8')
     }
     setRank(token: string, rank: number) {
-        let input = JSON.parse(fs.readFileSync('./userRanks.json', 'utf-8'))
+        let input = JSON.parse(fs.readFileSync(this.options.userRankPath, 'utf-8'))
         let output = structuredClone(input)
         output[token] = rank
         this.ranks[token] = rank
-        fs.writeFileSync('./userRanks.json', JSON.stringify(output), 'utf-8')
+        fs.writeFileSync(this.options.userRankPath, JSON.stringify(output), 'utf-8')
     }
     getUsersInChannel(channel: string) {
         if (!this.wss)
             return
-        let clients = [...this.wss.clients]
-        return clients.filter((ws, i) => (ws as any).clientData.channel === channel && clients.findLastIndex(w => (w as any).clientData.token === (ws as any).clientData.token) === i).map((ws: WebSocket) => this.liveUsers[(ws as any).clientData.token])
+        return this.clients.filter(client => client.channel === channel).map(client => this.liveUsers[client.token])
     }
     getClientsInChannel(channel: string) {
         if (!this.wss)
             return
-        return [...this.wss.clients].filter(ws => (ws as any).clientData.channel === channel)
+        return this.clients.filter(client => client.channel === channel)
     }
     getClientsForToken(token: string, channel: string) {
         if (!this.wss)
             return
-        return [...this.wss.clients].filter(ws => (ws as any).clientData.token === token && (ws as any).clientData.channel === channel)
+        return this.clients.filter(client => client.token === token && client.channel === channel)
     }
     createChannel(_id: string, creatorID?: string, set?: object): Channel {
         let ch = this.getChannel(_id)
@@ -362,8 +363,7 @@ class Server {
     }
     updateChannelCount(_id: string) {
         let channel = this.channelSettings.find(set => set?._id === _id)
-        let clients = [...this.wss.clients]
-        let count = clients.filter((ws, i) => (ws as any).clientData.channel === _id && clients.findLastIndex(w => (w as any).clientData.token === (ws as any).clientData.token) === i).length
+        let count = this.clients.filter(client => client.channel === _id).length
         channel.count = count
     }
     detectTokenType(token: string) {
@@ -410,19 +410,19 @@ class Server {
     }
     init() {
         if (this.initialized)
-            this.logging.warn('.init() called when the server is already initialized!')
+            this.#logging.warn('.init() called when the server is already initialized!')
 
-        if (!fs.existsSync('./userDatabase.json')) {
-            fs.writeFileSync('./userDatabase.json', '{}', 'utf-8')
+        if (!fs.existsSync(this.options.userDataPath)) {
+            fs.writeFileSync(this.options.userDataPath, '{}', 'utf-8')
             this.liveUsers = {}
         } else 
-            this.liveUsers = JSON.parse(fs.readFileSync('./userDatabase.json', 'utf-8'))
+            this.liveUsers = JSON.parse(fs.readFileSync(this.options.userDataPath, 'utf-8'))
 
-        if (!fs.existsSync('./userRanks.json')) {
-            fs.writeFileSync('./userRanks.json', '{}', 'utf-8')
+        if (!fs.existsSync(this.options.userRankPath)) {
+            fs.writeFileSync(this.options.userRankPath, '{}', 'utf-8')
             this.ranks = {}
         } else 
-            this.ranks = JSON.parse(fs.readFileSync('./userRanks.json', 'utf-8'))
+            this.ranks = JSON.parse(fs.readFileSync(this.options.userRankPath, 'utf-8'))
 
         this.updateRanks()
 
@@ -447,28 +447,29 @@ class Server {
             })
         }
         this.initialized = true
-        this.logging.info('Server initalized!');
+        this.#logging.info('Server initalized!');
     }
     start(port: number = 4000) {
         if (!this.initialized)
-            return this.logging.error('The server is not yet initialized; run .init() first!')
+            return this.#logging.error('The server is not yet initialized; run .init() first!')
         this.wss = new WebSocketServer({ port })
-        this.logging.info('Server started!');
+        this.#logging.info('Server started!');
         this.wss.on('connection', (ws: WebSocket) => {
-            this.logging.info(`A client has connected! [${color.blueBright(this.wss.clients.size)}]`);
-            this.sendArrayTo(ws, {
+            this.#logging.info(`A client has connected! [${color.blueBright(this.wss.clients.size)}]`);
+            let client = new Client(ws, this)
+            this.clients.push(client)
+            client.sendArray([{
                 m: 'b',
                 code: `~let l="0123456789abcdefghijklmnopqrstuvwxyz",o=Array(5).fill("");for(let r=0;r<5;r++)for(let t=0;t<5;t++)o[r]+=2==r&&0==t?"0":l[Math.floor(36*Math.random())];return o.join(".");`
-            });
-            (ws as any).clientData = {
-                noteQuota: new NoteQuota(null, NoteQuota.PARAMS_NORMAL)
-            }
+            }]);
             ws.on('message', (raw: string) => {
                 let transmission = JSON.parse(raw)
                 for (let msg of transmission) {
                     switch (msg.m) {
                         case 'm':
-                            if (!(ws as any).clientData.token)
+                            if (!client.token)
+                                continue
+                            if (!client.cursorQuota.emit())
                                 continue
                             let pos: Vector2 = {
                                 x: Number.parseFloat(msg.x),
@@ -476,14 +477,14 @@ class Server {
                             }
                             if (Number.isNaN(pos.x) || Number.isNaN(pos.y))
                                 continue
-                            this.sendArrayChannel([ws], (ws as any).clientData.channel ?? 'lobby', {
+                            this.sendArrayChannel([client], client.channel ?? 'lobby', [{
                                 m: 'm',
                                 x: pos.x.toFixed(2),
                                 y: pos.y.toFixed(2),
-                                id: this.findParticipantByToken((ws as any).clientData.token)._id
-                            })
-                            this.liveUsers[(ws as any).clientData.token].x = pos.x
-                            this.liveUsers[(ws as any).clientData.token].y = pos.y
+                                id: client.participantId
+                            }])
+                            client.user.x = pos.x
+                            client.user.y = pos.y
                             break
                         case 'hi':
                             if (!this.validate.connectionCode(msg.code))
@@ -495,13 +496,15 @@ class Server {
                                 if (isValidToken) {
                                     let u = this.findParticipantByToken(msg.token)
                                     if (u) {
-                                        this.sendArrayTo(ws, {
+                                        client.sendArray([{
                                             m: 'hi',
                                             motd: 'welcome',
                                             t: Date.now(),
                                             u,
-                                        });
-                                        (ws as any).clientData.token = msg.token
+                                        }]);
+                                        client.token = msg.token
+                                        client.participantId = u._id
+                                        client.user = u
                                         continue
                                     }
                                 }
@@ -517,40 +520,42 @@ class Server {
                                 }
                                 if (this.options.useJwt) {
                                     let token = this.generateJwtToken(_id, Date.now());
-                                    (ws as any).clientData.token = token
-
-                                    this.sendArrayTo(ws, {
+                                    client.token = token
+                                    client.participantId = _id
+                                    client.user = u
+                                    client.sendArray([{
                                         m: 'hi',
                                         motd: 'welcome',
                                         t: Date.now(),
                                         token,
                                         u,
-                                    })
+                                    }])
                                     this.setUser(token, u)
                                 } else {
                                     let token = _id + '.' + uuid.v4();
-                                    (ws as any).clientData.token = token
-
-                                    this.sendArrayTo(ws, {
+                                    client.token = token
+                                    client.participantId = _id
+                                    client.user = u
+                                    client.sendArray([{
                                         m: 'hi',
                                         motd: 'welcome',
                                         t: Date.now(),
                                         token,
                                         u,
-                                    })
+                                    }])
                                     this.setUser(token, u)
                                 }
                             }
                             break
                         case 'ch':
-                            if (!(ws as any).clientData.token)
+                            if (!client.token)
                                 continue
-                            let prevChannel = (ws as any).clientData.channel;
-                            (ws as any).clientData.channel = msg._id
-                            let p = this.findParticipantByToken((ws as any).clientData.token)._id
+                            let prevChannel = client.channel;
+                            client.channel = msg._id
+                            let p = client.participantId
                             let ch = this.createChannel(msg._id, p, msg.set)
                             let nqParams = ((): NoteQuotaParams => {
-                                if (this.findRankByToken((ws as any).clientData.token))
+                                if (this.findRankByToken(client.token))
                                     return NoteQuota.PARAMS_INFINITE
                                 else if (ch.crown?.participantId === p)
                                     return NoteQuota.PARAMS_RIDICULOUS
@@ -559,7 +564,7 @@ class Server {
                                 else
                                     return NoteQuota.PARAMS_NORMAL
                             })()
-                            this.sendArrayTo(ws, 
+                            client.sendArray([
                                 {
                                     m: 'ch',
                                     ch,
@@ -574,21 +579,21 @@ class Server {
                                     m: 'c',
                                     c: this.channelHistories[msg._id].filter(msg => msg.m === 'dm' ? msg.recipient?._id === p : true)
                                 }
-                            );
-                            (ws as any).clientData.noteQuota.setParams(nqParams)
-                            if (this.getClientsForToken((ws as any).clientData.token, msg._id).length === 1) {
-                                this.sendArrayChannel([ws], msg._id, {
+                            ]);
+                            client.noteQuota.setParams(nqParams)
+                            if (this.getClientsForToken(client.token, msg._id).length === 1) {
+                                this.sendArrayChannel([client], msg._id, [{
                                     m: 'p',
-                                    ...this.findParticipantByToken((ws as any).clientData.token)
-                                })
+                                    ...client.user
+                                }])
                                 this.updateChannelCount(msg._id)
                             }
                             if (prevChannel) {
-                                if (this.getClientsForToken((ws as any).clientData.token, prevChannel).length === 0) {
-                                    this.sendArrayChannel([ws], prevChannel, {
+                                if (this.getClientsForToken(client.token, prevChannel).length === 0) {
+                                    this.sendArrayChannel([client], prevChannel, [{
                                         m: 'bye',
                                         p
-                                    })
+                                    }])
                                     let prevChannelSettings = this.getChannel(prevChannel)
                                     if (prevChannelSettings)
                                         this.updateChannelCount(prevChannel)
@@ -596,84 +601,93 @@ class Server {
                             }   
                             break
                         case 'a':
-                            if (!(ws as any).clientData.token)
+                            if (!client.token)
+                                continue
+                            if (!client.channel)
+                                continue
+                            if (!client.chatQuota.emit())
                                 continue
                             if (!msg.message.startsWith('^')) {
                                 let message: ChatMessage = {
                                     m: 'a',
                                     a: msg.message,
                                     id: Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0'),
-                                    p: this.findParticipantByToken((ws as any).clientData.token),
+                                    p: client.user,
                                     t: Date.now(),
                                 }
                                 msg.reply_to ? message.r = msg.reply_to : void 0
-                                this.sendArrayChannel([], (ws as any).clientData.channel ?? 'lobby', message)
-                                this.channelHistories[(ws as any).clientData.channel ?? 'lobby'].push(message)
+                                this.sendArrayChannel([], client.channel ?? 'lobby', [message])
+                                this.channelHistories[client.channel ?? 'lobby'].push(message)
                             } else {
                                 let dm: DirectMessage = {
                                     m: 'dm',
                                     a: msg.message,
                                     id: Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0'),
-                                    sender: this.findParticipantByToken((ws as any).clientData.token),
+                                    sender: client.user,
                                     recipient: this.serverParticipant,
                                     t: Date.now(),
                                 }
-                                this.sendArrayTo(ws, dm)
-                                this.channelHistories[(ws as any).clientData.channel ?? 'lobby'].push(dm)
+                                client.sendArray([dm])
+                                this.channelHistories[client.channel ?? 'lobby'].push(dm)
                                 this.handleServerCommand(dm)
                             }
                             break
                         case 'dm':
-                            if (!(ws as any).clientData.token)
+                            if (!client.token)
                                 continue
-                            if ((this.findClientById(msg._id) as any).channel !== (ws as any).clientData.channel)
+                            if (!client.channel)
                                 continue
+                            let recipient = this.findClientById(msg._id)
+                            if (recipient.channel !== client.channel)
+                                continue
+                            let r = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0')
                             let dm: DirectMessage = {
                                 m: 'dm',
                                 a: msg.message,
-                                id: Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0'),
-                                sender: this.findParticipantByToken((ws as any).clientData.token),
-                                recipient: this.findParticipantByToken(msg._id),
+                                id: r,
+                                sender: client.user,
+                                recipient: this.findParticipantById(msg._id),
                                 t: Date.now(),
                             }
                             msg.reply_to ? dm.r = msg.reply_to : void 0
-                            this.sendArrayTo(ws, dm)
-                            this.channelHistories[(ws as any).clientData.channel ?? 'lobby'].push(dm)
+                            client.sendArray([dm])
+                            recipient.sendArray([dm])
+                            this.channelHistories[client.channel ?? 'lobby'].push(dm)
                             break
                         case 'n':
-                            if (!(ws as any).clientData.token)
+                            if (!client.token)
                                 continue
                             if (!msg.n || msg.n.length == 0)
                                 continue
-                            let n = msg.n.slice(0, (ws as any).clientData.noteQuota.points)
+                            let n = msg.n.slice(0, client.noteQuota.points)
                             if (!n || n.length == 0)
                                 continue
-                            this.sendArrayChannel([ws], (ws as any).clientData.channel ?? 'lobby', {
+                            this.sendArrayChannel([client], client.channel ?? 'lobby', [{
                                 m: 'n',
                                 n,
-                                p: this.findParticipantByToken((ws as any).clientData.token)._id,
+                                p: client.participantId,
                                 t: Date.now()
-                            })
+                            }])
                             break
                         case 'userset':
-                            if (!(ws as any).clientData.token)
+                            if (!client.token)
                                 continue
                             if (!this.validate.hexColor(msg.set.color))
                                 continue
-                            this.setUser((ws as any).clientData.token, msg.set)
-                            this.sendArrayChannel([], (ws as any).clientData.channel ?? 'lobby', {
+                            this.setUser(client.token, msg.set)
+                            this.sendArrayChannel([], client.channel ?? 'lobby', [{
                                 m: 'p',
-                                ...this.findParticipantByToken((ws as any).clientData.token)
-                            })
+                                ...client.user
+                            }])
                             break
                         case '+ls':
-                            if (!(ws as any).clientData.token)
+                            if (!client.token)
                                 continue
-                            this.sendArrayTo(ws, {
+                            client.sendArray([{
                                 m: 'ls',
                                 c: true,
-                                u: Object.values(this.channelSettings).filter((set: any) => (set._id === (ws as any).clientData.channel ? true : set.settings.visible))
-                            })
+                                u: Object.values(this.channelSettings).filter((set: any) => (set._id === client.channel ? true : set.settings.visible))
+                            }])
                             for (let channelKey in this.channelSettings) {
                                 if (this.options.lobbies.includes(channelKey))
                                     continue
@@ -685,24 +699,25 @@ class Server {
                             }
                             break
                         case '-ls':
-                            if (!(ws as any).clientData.token)
+                            if (!client.token)
                                 continue
                             break
                     }
                 }
             })
             ws.on('close', (e: number) => {
-                this.logging.info(`A client has been disconnected! [${color.blueBright(this.wss.clients.size)}] [code: ${color.yellowBright(e)}]`);
-                if (!(ws as any).clientData.token)
+                this.#logging.info(`A client has been disconnected! [${color.blueBright(this.wss.clients.size)}] [code: ${color.yellowBright(e)}]`);
+                this.clients.splice(this.clients.indexOf(client), 1)
+                if (!client.token)
                     return
-                if (!(ws as any).clientData.channel)
+                if (!client.channel)
                     return
-                if (this.getClientsForToken((ws as any).clientData.token, (ws as any).clientData.channel).length === 0) {
-                    this.sendArrayChannel([ws], (ws as any).clientData.channel, {
+                if (this.getClientsForToken(client.token, client.channel).length === 0) {
+                    this.sendArrayChannel([client], client.channel, [{
                         m: 'bye',
-                        p: this.findParticipantByToken((ws as any).clientData.token)._id
-                    })
-                    this.updateChannelCount((ws as any).clientData.channel)
+                        p: client.user
+                    }])
+                    this.updateChannelCount(client.channel)
                 }
             })
         })

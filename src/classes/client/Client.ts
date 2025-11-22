@@ -1,0 +1,98 @@
+// import: classes
+import { EventEmitter } from 'node:events'
+import { WebSocket } from 'ws'
+
+// import: local classes
+import { EventLimiter } from '../ratelimit/EventLimiter.js'
+import { NoteQuota } from '../ratelimit/NoteQuota.js'
+import { Server } from '../server/Server.js'
+
+// import: local interfaces
+import { DirectMessage } from '../../interfaces/chat/DirectMessage.js'
+import { Participant } from '../../interfaces/participant/Participant.js'
+
+// import: constants
+import color from 'cli-color'
+/**
+ * An MPP client, but from the server's perspective.
+ */
+class Client extends EventEmitter {
+    ws: WebSocket
+    parentServer: Server
+
+    noteQuota: NoteQuota = new NoteQuota(null, NoteQuota.PARAMS_NORMAL)
+    chatQuota: EventLimiter = new EventLimiter(10)
+    cursorQuota: EventLimiter = new EventLimiter(20)
+
+    token: string
+    channel: string
+    participantId: string
+    user: Participant
+    /**
+     * Class logging methods.
+     */
+    #logging: Record<string, (text: string) => void> = {
+        info: text => {
+            return console.log(`[${color.cyanBright('INFO')}] - ${color.whiteBright('Client.ts')} - ${color.whiteBright(text)}`)
+        },
+        warn: text => {
+            return console.log(`[${color.yellowBright('WARNING')}] - ${color.whiteBright('Client.ts')} - ${color.whiteBright(text)}`)
+        },
+        error: text => {
+            return console.log(`[${color.redBright('ERROR')}] - ${color.whiteBright('Client.ts')} - ${color.whiteBright(text)}`)
+        }
+    }
+    constructor(ws: WebSocket, parentServer?: Server) {
+        super()
+        if (ws.readyState !== WebSocket.OPEN) {
+            this.#logging.warn('Client initialized using a WebSocket that isn\'t fully connected.') // theoretically, you shouldn't ever see this
+            ws.once('open', () => {
+                this.ws = ws
+                this.parentServer = parentServer
+            })
+            return this
+        }
+        this.ws = ws
+        this.parentServer = parentServer
+    }
+    /**
+     * Sends a server message to this client,
+     * @param message The message to send.
+     * @param reply_to The message ID to reply to.
+     */
+    serverMessage(message: string, reply_to?: string): void {
+        if (!this.parentServer)
+            return
+        let dm: DirectMessage = {
+            m: 'dm',
+            a: message,
+            id: Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0'),
+            sender: this.parentServer.serverParticipant,
+            recipient: this.user,
+            t: Date.now(),
+        }
+        reply_to ? dm.r = reply_to : void 0
+        this.sendArray([dm])
+    }
+    /**
+     * Send a group of messages to the client.
+     * @param data The array of messages to send.
+     */
+    sendArray(data: any[]): void {
+        if (!this.ws)
+            return
+        this.ws.send(JSON.stringify(data))
+    }
+    /**
+     * Sends raw data to the client.
+     * @param data The data to send.
+     */
+    send(data: ArrayBufferLike | string): void {
+        if (!this.ws)
+            return
+        this.ws.send(data)
+    }
+}
+export {
+    Client
+}

@@ -12,6 +12,14 @@ interface ServerOptions {
      * The encryption secret to use for JWT tokens.
      */
     jwtSecret?: string
+    /**
+     * The path at which the user database is stored.
+     */
+    userDataPath?: string
+    /**
+     * The path at which user ranks are stored.
+     */
+    userRankPath?: string
 }
 export {
     ServerOptions
