@@ -17,6 +17,7 @@ import { util } from '../../modules/util.js'
 
 // import: local interfaces
 import { Channel } from '../../interfaces/channel/Channel.js'
+import { ChannelSettings } from '../../interfaces/channel/ChannelSettings.js'
 import { Participant } from '../../interfaces/participant/Participant.js'
 import { ParticipantModifier } from '../../interfaces/participant/ParticipantModifier.js'
 import { ChatMessage } from '../../interfaces/chat/ChatMessage.js'
@@ -281,7 +282,7 @@ class Server {
             return
         return this.clients.filter(client => client.token === token && client.channel._id === channel)
     }
-    createChannel(_id: string, creatorID?: string, set?: object): Channel {
+    createChannel(_id: string, creatorID?: string, set?: ChannelSettings): Channel {
         let ch = this.getChannel(_id)
         if (!ch) {
             let channelSettings: Channel = {
@@ -598,7 +599,18 @@ class Server {
                                     while (this.getChannel(`lobby${lobbyNum}`)) {
                                         lobbyNum += 1
                                     }
-                                    ch = this.createChannel(`lobby${lobbyNum}`)
+                                    ch = this.createChannel(`lobby${lobbyNum}`, undefined, {
+                                        allowBots: true,
+                                        chat: true,
+                                        color: '#73b3cc',
+                                        color2: '#273546',
+                                        crownsolo: false,
+                                        limit: 20,
+                                        lobby: true,
+                                        'no cussing': false,
+                                        noindex: false,
+                                        visible: true
+                                    })
                                     client.channel = ch
                                 } else {
                                     client.sendArray([
