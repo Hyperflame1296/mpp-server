@@ -41,6 +41,10 @@ class Server {
      */
     liveUsers: Record<string, Participant> = {}
     /**
+     * All users loaded from the database.
+     */
+    userDatabase: Record<string, Participant> = {}
+    /**
      * All currently loaded user modifiers.
      */
     modifiers: Record<string, ParticipantModifier> = {
@@ -189,8 +193,6 @@ class Server {
         return this.modifiers[token]?.rank ?? 0
     }
     setUser(token: string, data: any) {
-        let input = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
-        let output = structuredClone(input)
         switch (this.findRankByToken(token)) {
             case 0:
                 delete data.tag
@@ -213,23 +215,17 @@ class Server {
                     color: '#830000'
                 }
                 break
-            default:
-                delete data.tag
-                break
         }
-        if (output[token])
-            Object.assign(output[token], data)
-        else output[token] = data as Participant
         if (this.liveUsers[token])
             Object.assign(this.liveUsers[token], data)
         else this.liveUsers[token] = data as Participant
-        fs.writeFileSync(this.options.paths.userDB, JSON.stringify(output, undefined, 4), 'utf-8')
+        if (this.userDatabase[token])
+            Object.assign(this.userDatabase[token], data)
+        else this.userDatabase[token] = data as Participant
     }
     updateRanks() {
-        let input = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
-        let output = structuredClone(input)
         let data: any = {}
-        for (let token in output) {
+        for (let token in this.liveUsers) {
             switch (this.findRankByToken(token)) {
                 case 0:
                     delete data.tag
@@ -252,14 +248,10 @@ class Server {
                         color: '#830000'
                     }
                     break
-                default:
-                    delete data.tag
-                    break
             }
-            Object.assign(output[token], data)
             Object.assign(this.liveUsers[token], data)
+            Object.assign(this.userDatabase[token], data)
         }
-        fs.writeFileSync(this.options.paths.userDB, JSON.stringify(output, undefined, 4), 'utf-8')
     }
     setRank(token: string, rank: number) {
         let input = JSON.parse(fs.readFileSync(this.options.paths.userModifiers, 'utf-8'))
@@ -415,11 +407,12 @@ class Server {
         if (this.initialized)
             this.#logging.warn('.init() called when the server is already initialized!')
 
-        if (!fs.existsSync(this.options.paths.userDB)) {
+        if (!fs.existsSync(this.options.paths.userDB))
             fs.writeFileSync(this.options.paths.userDB, '{}', 'utf-8')
-            this.liveUsers = {}
-        } else 
+        else {
             this.liveUsers = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
+            this.userDatabase = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
+        }
 
         if (!fs.existsSync(this.options.paths.userModifiers)) {
             fs.writeFileSync(this.options.paths.userModifiers, '{}', 'utf-8')
@@ -745,6 +738,10 @@ class Server {
                 if (!client.channel)
                     return
                 if (this.getClientsForToken(client.token, client.channel).length === 0) {
+                    let input = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
+                    let output = structuredClone(input)
+                    output[client.token] = this.userDatabase[client.token]
+                    fs.writeFileSync(this.options.paths.userDB, JSON.stringify(output, undefined, 4), 'utf-8')
                     this.sendArrayChannel([client], client.channel, [{
                         m: 'bye',
                         p: client.user
