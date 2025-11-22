@@ -18,12 +18,13 @@ import { util } from '../../modules/util.js'
 // import: local interfaces
 import { Channel } from '../../interfaces/channel/Channel.js'
 import { Participant } from '../../interfaces/participant/Participant.js'
+import { ParticipantModifier } from '../../interfaces/participant/ParticipantModifier.js'
 import { ChatMessage } from '../../interfaces/chat/ChatMessage.js'
-import { ServerOptions } from '../../interfaces/server/ServerOptions.js'
 import { DirectMessage } from '../../interfaces/chat/DirectMessage.js'
-import { ServerCommand } from '../../interfaces/server/ServerCommand.js'
-import { NoteQuotaParams } from '../../interfaces/ratelimit/NoteQuotaParams.js'
 import { Vector2 } from '../../interfaces/math/Vector2.js'
+import { ServerCommand } from '../../interfaces/server/ServerCommand.js'
+import { ServerOptions } from '../../interfaces/server/ServerOptions.js'
+import { NoteQuotaParams } from '../../interfaces/ratelimit/NoteQuotaParams.js'
 
 // code
 class Server {
@@ -39,6 +40,12 @@ class Server {
      * The participant list.
      */
     liveUsers: Record<string, Participant> = {}
+    /**
+     * All currently loaded user modifiers.
+     */
+    modifiers: Record<string, ParticipantModifier> = {
+
+    }
     /**
      * Class logging methods.
      */
@@ -131,12 +138,6 @@ class Server {
         ]
     }
     /**
-     * All currently loaded user ranks by token.
-     */
-    ranks: Record<string, number> = {
-
-    }
-    /**
      * The participant used for things like server messages.
      */
     serverParticipant: Participant = {
@@ -154,45 +155,11 @@ class Server {
         this.options.lobbies      = options?.lobbies      ?? ['lobby', 'test/awkward']
         this.options.useJwt       = options?.useJwt       ?? true
         this.options.jwtSecret    = options?.jwtSecret    ?? 'e8wbn49najg8a8gj8hi7bg7a18f5bo9a'
-        this.options.userDataPath = options?.userDataPath ?? './userDatabase.json'
-        this.options.userRankPath = options?.userRankPath ?? './userRanks.json'
+        this.options.paths = {
+            userDB       : options?.paths?.userDB        ?? './userDatabase.json',
+            userModifiers: options?.paths?.userModifiers ?? './userModifiers.json'
+        }
     }
-    handleServerCommand(msg: DirectMessage) {
-        let client = this.findClientById(msg.sender._id)
-        if (!client || !client.token)
-            return
-        try {
-            let prefix = '^'
-			let a = msg.a.split(' '),
-				b = a[0]?.trim() ?? ''
-			let input = msg.a.substring(b.length).trim()
-			if (msg.sender._id !== this.serverParticipant._id) {
-				let command = this.findServerCommand(b.replace(prefix, ''))
-				if (command) {
-					try {
-                        if (this.findRankByToken(client.token) >= 2)
-						    command.func(a, input, msg, client)
-                        else
-                            client.serverMessage(`You don't have permission to use that command.`, msg.id)
-					} catch (err) {
-						client.serverMessage(`\`\`\`${err}\`\`\``, msg.id)
-					}
-				} else client.serverMessage(`This command doesn\'t exist.`, msg.id)
-			}
-		} catch (err) {
-			client.serverMessage(`\`\`\`${err}\`\`\``, msg.id)
-		}
-    }
-    findServerCommand(name: string): ServerCommand {
-		let command: ServerCommand
-		for (let category in this.serverCommands) {
-			let commands = this.serverCommands[category]
-			command = commands.find((h: ServerCommand) => h.name === name || h.aliases.includes(name))
-			if (command)
-				break
-		}
-		return command
-	}
     sendGlobalArray(exclusions: Client[], data: any[]) {
         if (!this.wss)
             return
@@ -216,13 +183,13 @@ class Server {
         return this.liveUsers[token]
     }
     findClientById(_id: string) {
-        return this.clients.find((client: Client) => client.participantId === _id)
+        return this.clients.find(client => client.participantId === _id)
     }
     findRankByToken(token: string) {
-        return this.ranks[token] ?? 0
+        return this.modifiers[token]?.rank ?? 0
     }
     setUser(token: string, data: any) {
-        let input = JSON.parse(fs.readFileSync(this.options.userDataPath, 'utf-8'))
+        let input = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
         let output = structuredClone(input)
         switch (this.findRankByToken(token)) {
             case 0:
@@ -256,10 +223,10 @@ class Server {
         if (this.liveUsers[token])
             Object.assign(this.liveUsers[token], data)
         else this.liveUsers[token] = data as Participant
-        fs.writeFileSync(this.options.userDataPath, JSON.stringify(output), 'utf-8')
+        fs.writeFileSync(this.options.paths.userDB, JSON.stringify(output, undefined, 4), 'utf-8')
     }
     updateRanks() {
-        let input = JSON.parse(fs.readFileSync(this.options.userDataPath, 'utf-8'))
+        let input = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
         let output = structuredClone(input)
         let data: any = {}
         for (let token in output) {
@@ -292,14 +259,16 @@ class Server {
             Object.assign(output[token], data)
             Object.assign(this.liveUsers[token], data)
         }
-        fs.writeFileSync(this.options.userDataPath, JSON.stringify(output), 'utf-8')
+        fs.writeFileSync(this.options.paths.userDB, JSON.stringify(output, undefined, 4), 'utf-8')
     }
     setRank(token: string, rank: number) {
-        let input = JSON.parse(fs.readFileSync(this.options.userRankPath, 'utf-8'))
+        let input = JSON.parse(fs.readFileSync(this.options.paths.userModifiers, 'utf-8'))
+        if (!input[token])
+            return
         let output = structuredClone(input)
-        output[token] = rank
-        this.ranks[token] = rank
-        fs.writeFileSync(this.options.userRankPath, JSON.stringify(output), 'utf-8')
+        output[token].rank = rank
+        this.modifiers[token].rank = rank
+        fs.writeFileSync(this.options.paths.userModifiers, JSON.stringify(output, undefined, 4), 'utf-8')
     }
     getUsersInChannel(channel: string) {
         if (!this.wss)
@@ -382,6 +351,42 @@ class Server {
         }
         return jwt.sign(payload, this.options.jwtSecret, { algorithm: 'HS256' });
     }
+    handleServerCommand(msg: DirectMessage) {
+        let client = this.findClientById(msg.sender._id)
+        if (!client || !client.token)
+            return
+        try {
+            let prefix = '^'
+			let a = msg.a.split(' '),
+				b = a[0]?.trim() ?? ''
+			let input = msg.a.substring(b.length).trim()
+			if (msg.sender._id !== this.serverParticipant._id) {
+				let command = this.findServerCommand(b.replace(prefix, ''))
+				if (command) {
+					try {
+                        if (this.findRankByToken(client.token) >= 2)
+						    command.func(a, input, msg, client)
+                        else
+                            client.serverMessage(`You don't have permission to use that command.`, msg.id)
+					} catch (err) {
+						client.serverMessage(`\`\`\`${err}\`\`\``, msg.id)
+					}
+				} else client.serverMessage(`This command doesn\'t exist.`, msg.id)
+			}
+		} catch (err) {
+			client.serverMessage(`\`\`\`${err}\`\`\``, msg.id)
+		}
+    }
+    findServerCommand(name: string): ServerCommand {
+		let command: ServerCommand
+		for (let category in this.serverCommands) {
+			let commands = this.serverCommands[category]
+			command = commands.find((h: ServerCommand) => h.name === name || h.aliases.includes(name))
+			if (command)
+				break
+		}
+		return command
+	}
     validate: Record<string, (code: string) => boolean> = {
         connectionCode: (code: string) => {
             return (
@@ -410,17 +415,17 @@ class Server {
         if (this.initialized)
             this.#logging.warn('.init() called when the server is already initialized!')
 
-        if (!fs.existsSync(this.options.userDataPath)) {
-            fs.writeFileSync(this.options.userDataPath, '{}', 'utf-8')
+        if (!fs.existsSync(this.options.paths.userDB)) {
+            fs.writeFileSync(this.options.paths.userDB, '{}', 'utf-8')
             this.liveUsers = {}
         } else 
-            this.liveUsers = JSON.parse(fs.readFileSync(this.options.userDataPath, 'utf-8'))
+            this.liveUsers = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
 
-        if (!fs.existsSync(this.options.userRankPath)) {
-            fs.writeFileSync(this.options.userRankPath, '{}', 'utf-8')
-            this.ranks = {}
+        if (!fs.existsSync(this.options.paths.userModifiers)) {
+            fs.writeFileSync(this.options.paths.userModifiers, '{}', 'utf-8')
+            this.modifiers = {}
         } else 
-            this.ranks = JSON.parse(fs.readFileSync(this.options.userRankPath, 'utf-8'))
+            this.modifiers = JSON.parse(fs.readFileSync(this.options.paths.userModifiers, 'utf-8'))
 
         this.updateRanks()
 
@@ -503,6 +508,12 @@ class Server {
                                         client.token = msg.token
                                         client.participantId = u._id
                                         client.user = u
+
+                                        // apply modifiers!
+                                        client.modifier         = this.modifiers[msg.token]
+                                        client.chatQuota  .max *= this.modifiers[msg.token].quota?.chat   ?? 1
+                                        client.cursorQuota.max *= this.modifiers[msg.token].quota?.cursor ?? 1
+                                        client.userQuota  .max *= this.modifiers[msg.token].quota?.user   ?? 1
                                         continue
                                     }
                                 }
@@ -521,6 +532,12 @@ class Server {
                                     client.token = token
                                     client.participantId = _id
                                     client.user = u
+
+                                    // apply modifiers!
+                                    client.modifier         = this.modifiers[msg.token]
+                                    client.chatQuota  .max *= this.modifiers[msg.token].quota?.chat   ?? 1
+                                    client.cursorQuota.max *= this.modifiers[msg.token].quota?.cursor ?? 1
+                                    client.userQuota  .max *= this.modifiers[msg.token].quota?.user   ?? 1
                                     client.sendArray([{
                                         m: 'hi',
                                         motd: 'welcome',
@@ -534,6 +551,12 @@ class Server {
                                     client.token = token
                                     client.participantId = _id
                                     client.user = u
+
+                                    // apply modifiers!
+                                    client.modifier         = this.modifiers[msg.token]
+                                    client.chatQuota  .max *= this.modifiers[msg.token].quota?.chat   ?? 1
+                                    client.cursorQuota.max *= this.modifiers[msg.token].quota?.cursor ?? 1
+                                    client.userQuota  .max *= this.modifiers[msg.token].quota?.user   ?? 1
                                     client.sendArray([{
                                         m: 'hi',
                                         motd: 'welcome',
@@ -553,8 +576,8 @@ class Server {
                             let p = client.participantId
                             let ch = this.createChannel(msg._id, p, msg.set)
                             let nqParams = ((): NoteQuotaParams => {
-                                if (this.findRankByToken(client.token))
-                                    return NoteQuota.PARAMS_INFINITE
+                                if (this.findRankByToken(client.token) === 3)
+                                    return NoteQuota.PARAMS_UNLIMITED
                                 else if (ch.crown?.participantId === p)
                                     return NoteQuota.PARAMS_RIDICULOUS
                                 else if (ch.settings.lobby)
@@ -562,23 +585,29 @@ class Server {
                                 else
                                     return NoteQuota.PARAMS_NORMAL
                             })()
+                            nqParams.allowance *= client.modifier?.quota?.note ?? 1
+                            nqParams.max       *= client.modifier?.quota?.note ?? 1
+                            client.noteQuota.setParams(nqParams)
                             client.sendArray([
                                 {
                                     m: 'ch',
                                     ch,
                                     p,
                                     ppl: [...new Set(this.getUsersInChannel(msg._id))],
-                                },
-                                {
-                                    m: 'nq',
-                                    ...nqParams
-                                },
+                                }
+                            ]);
+                            client.sendArray([
                                 {
                                     m: 'c',
                                     c: this.channelHistories[msg._id].filter(msg => msg.m === 'dm' ? msg.recipient?._id === p : true)
                                 }
-                            ]);
-                            client.noteQuota.setParams(nqParams)
+                            ])
+                            client.sendArray([
+                                {
+                                    m: 'nq',
+                                    ...nqParams
+                                }
+                            ])
                             if (this.getClientsForToken(client.token, msg._id).length === 1) {
                                 this.sendArrayChannel([client], msg._id, [{
                                     m: 'p',
@@ -635,6 +664,8 @@ class Server {
                                 continue
                             if (!client.channel)
                                 continue
+                            if (!client.chatQuota.emit())
+                                continue
                             let recipient = this.findClientById(msg._id)
                             if (recipient.channel !== client.channel)
                                 continue
@@ -657,18 +688,19 @@ class Server {
                                 continue
                             if (!msg.n || msg.n.length == 0)
                                 continue
-                            let n = msg.n.slice(0, client.noteQuota.points)
-                            if (!n || n.length == 0)
+                            if (!client.noteQuota.spend(msg.n.length))
                                 continue
                             this.sendArrayChannel([client], client.channel ?? 'lobby', [{
                                 m: 'n',
-                                n,
+                                n: msg.n,
                                 p: client.participantId,
                                 t: Date.now()
                             }])
                             break
                         case 'userset':
                             if (!client.token)
+                                continue
+                            if (!client.userQuota.emit())
                                 continue
                             if (!this.validate.hexColor(msg.set.color))
                                 continue

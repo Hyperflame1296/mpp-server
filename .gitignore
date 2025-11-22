@@ -145,6 +145,6 @@ dist/
 /package-lock.json
 /run.ps1
 /userDatabase.json
-/userRanks.json
+/userModifiers.json
 /test.js
 /ref.txt

@@ -2,11 +2,11 @@ class EventLimiter {
     eventCount: number = 0
     interval: NodeJS.Timeout
     max: number
-    constructor(maxPerSecond: number) {
-        this.max = maxPerSecond
+    constructor(maxPerTwoSeconds: number) {
+        this.max = maxPerTwoSeconds
         this.interval = setInterval((() => {
             this.eventCount = 0
-        }).bind(this), 1000)
+        }).bind(this), 2000)
     }
     stop() {
         this.interval.close()

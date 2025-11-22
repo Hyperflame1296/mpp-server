@@ -12,6 +12,7 @@ import { ChatMessage } from './interfaces/chat/ChatMessage.js'
 import { DirectMessage } from './interfaces/chat/DirectMessage.js'
 import { Vector2 } from './interfaces/math/Vector2.js'
 import { Participant } from './interfaces/participant/Participant.js'
+import { ParticipantModifier } from './interfaces/participant/ParticipantModifier.js'
 import { NoteQuotaParams } from './interfaces/ratelimit/NoteQuotaParams.js'
 import { ServerCommand } from './interfaces/server/ServerCommand.js'
 import { ServerOptions } from './interfaces/server/ServerOptions.js'
@@ -37,6 +38,7 @@ export {
     Vector2,
     // interfaces/participant
     Participant,
+    ParticipantModifier,
     // interfaces/ratelimit
     NoteQuotaParams,
     // interfaces/server

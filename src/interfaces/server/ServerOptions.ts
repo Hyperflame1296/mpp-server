@@ -13,13 +13,20 @@ interface ServerOptions {
      */
     jwtSecret?: string
     /**
-     * The path at which the user database is stored.
+     * File directories for server data.
      */
-    userDataPath?: string
-    /**
-     * The path at which user ranks are stored.
-     */
-    userRankPath?: string
+    paths?: {
+        /**
+         * The path at which the user database is stored.
+         * @default './userDatabase.json'
+         */
+        userDB?: string
+        /**
+         * The path at which extra user data (quota multiplier, rank, etc.) are stored.
+         * @default './userModifiers.json'
+         */
+        userModifiers?: string
+    }
 }
 export {
     ServerOptions

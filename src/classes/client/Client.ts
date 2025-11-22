@@ -13,6 +13,7 @@ import { Participant } from '../../interfaces/participant/Participant.js'
 
 // import: constants
 import color from 'cli-color'
+import { ParticipantModifier } from '../../interfaces/participant/ParticipantModifier.js'
 /**
  * An MPP client, but from the server's perspective.
  */
@@ -20,11 +21,13 @@ class Client extends EventEmitter {
     ws: WebSocket
     parentServer: Server
 
-    noteQuota: NoteQuota = new NoteQuota(null, NoteQuota.PARAMS_NORMAL)
-    chatQuota: EventLimiter = new EventLimiter(10)
+    noteQuota  : NoteQuota    = new NoteQuota(null, NoteQuota.PARAMS_NORMAL)
+    userQuota  : EventLimiter = new EventLimiter(5 )
+    chatQuota  : EventLimiter = new EventLimiter(10)
     cursorQuota: EventLimiter = new EventLimiter(20)
 
     token: string
+    modifier: ParticipantModifier
     channel: string
     participantId: string
     user: Participant
@@ -62,7 +65,7 @@ class Client extends EventEmitter {
      * @param message The message to send.
      * @param reply_to The message ID to reply to.
      */
-    serverMessage(message: string, reply_to?: string): void {
+    serverMessage(message: string, reply_to?: string) {
         if (!this.parentServer)
             return
         let dm: DirectMessage = {
@@ -80,7 +83,7 @@ class Client extends EventEmitter {
      * Send a group of messages to the client.
      * @param data The array of messages to send.
      */
-    sendArray(data: any[]): void {
+    sendArray(data: any[]) {
         if (!this.ws)
             return
         this.ws.send(JSON.stringify(data))
@@ -89,7 +92,7 @@ class Client extends EventEmitter {
      * Sends raw data to the client.
      * @param data The data to send.
      */
-    send(data: ArrayBufferLike | string): void {
+    send(data: ArrayBufferLike | string) {
         if (!this.ws)
             return
         this.ws.send(data)
