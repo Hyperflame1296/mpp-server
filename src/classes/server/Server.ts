@@ -356,6 +356,13 @@ class Server {
         let channel = this.channelSettings.find(set => set?._id === _id)
         let count = this.clients.filter(client => client.channel === _id).length
         channel.count = count
+        for (let client of this.clients) {
+            client.sendArray([{
+                m: 'ls',
+                c: false,
+                u: [channel]
+            }])
+        }
     }
     detectTokenType(token: string) {
         let sectionCount = token.split('.').length
@@ -674,6 +681,7 @@ class Server {
                         case '+ls':
                             if (!client.token)
                                 continue
+                            client.subscribe('ls')
                             client.sendArray([{
                                 m: 'ls',
                                 c: true,
@@ -692,6 +700,7 @@ class Server {
                         case '-ls':
                             if (!client.token)
                                 continue
+                            client.unsubscribe('ls')
                             break
                     }
                 }

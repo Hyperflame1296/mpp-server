@@ -28,6 +28,8 @@ class Client extends EventEmitter {
     channel: string
     participantId: string
     user: Participant
+    
+    subscriptions: string[] = []
     /**
      * Class logging methods.
      */
@@ -91,6 +93,28 @@ class Client extends EventEmitter {
         if (!this.ws)
             return
         this.ws.send(data)
+    }
+    /**
+     * Make a client listen for an event that requires a subscription.
+     */
+    subscribe(type: string) {
+        if (this.subscribedTo(type))
+            return
+        this.subscriptions.push(type)
+    }
+    /**
+     * Make a client stop listening for an event that requires a subscription.
+     */
+    unsubscribe(type: string) {
+        if (!this.subscribedTo(type))
+            return
+        this.subscriptions.splice(this.subscriptions.indexOf(type), 1)
+    }
+    /**
+     * Whether a client is subscribed to events that apply or not.
+     */
+    subscribedTo(type: string): boolean {
+        return this.subscriptions.includes(type)
     }
 }
 export {
