@@ -178,7 +178,7 @@ class Server {
         }
     }
     sendArrayChannel(exclusions: Client[], channel: string, data: object[]) {
-        for (let client of this.clients.filter(client => client.channel == channel)) {
+        for (let client of this.clients.filter(client => client.channel?._id === channel)) {
             if (exclusions.includes(client))
                 continue
             client.send(JSON.stringify(data))
@@ -269,17 +269,17 @@ class Server {
     getUsersInChannel(channel: string) {
         if (!this.wss)
             return
-        return this.clients.filter(client => client.channel === channel).map(client => this.liveUsers[client.token])
+        return this.clients.filter(client => client.channel._id === channel).map(client => this.liveUsers[client.token])
     }
     getClientsInChannel(channel: string) {
         if (!this.wss)
             return
-        return this.clients.filter(client => client.channel === channel)
+        return this.clients.filter(client => client.channel._id === channel)
     }
     getClientsForToken(token: string, channel: string) {
         if (!this.wss)
             return
-        return this.clients.filter(client => client.token === token && client.channel === channel)
+        return this.clients.filter(client => client.token === token && client.channel._id === channel)
     }
     createChannel(_id: string, creatorID?: string, set?: object): Channel {
         let ch = this.getChannel(_id)
@@ -319,7 +319,7 @@ class Server {
     }
     updateChannelCount(_id: string) {
         let channel = this.channelSettings.find(set => set?._id === _id)
-        let count = this.clients.filter(client => client.channel === _id).length
+        let count = this.clients.filter(client => client.channel._id  === _id).length
         channel.count = count
         for (let client of this.clients) {
             client.sendArray([{
@@ -383,6 +383,29 @@ class Server {
 		}
 		return command
 	}
+    dropCrown(channel: Channel) {
+        delete channel.crown.participantId
+        channel.crown.startPos = {
+            x: 50 + Math.random() * 10,
+            y: 50 + Math.random() * 10
+        }
+        channel.crown.endPos = {
+            x: 50,
+            y: 50
+        }
+        channel.crown.time = Date.now()
+        let clients = this.getClientsInChannel(channel._id)
+        for (let c of clients) {
+            c.sendArray([
+                {
+                    m: 'ch',
+                    ch: channel,
+                    p: c.participantId,
+                    ppl: [...new Set(clients.map(c => c.user))],
+                }
+            ])
+        }
+    }
     validate: Record<string, (code: string) => boolean> = {
         connectionCode: (code: string) => {
             return (
@@ -472,15 +495,15 @@ class Server {
                             if (!client.cursorQuota.emit())
                                 continue
                             let pos: Vector2 = {
-                                x: Number.parseFloat(msg.x),
-                                y: Number.parseFloat(msg.y)
+                                x: !Number.isFinite(msg.x) ? Number.parseFloat(msg.x) : msg.x,
+                                y: !Number.isFinite(msg.y) ? Number.parseFloat(msg.y) : msg.y
                             }
                             if (Number.isNaN(pos.x) || Number.isNaN(pos.y))
                                 continue
-                            this.sendArrayChannel([client], client.channel ?? 'lobby', [{
+                            this.sendArrayChannel([client], client.channel._id ?? 'lobby', [{
                                 m: 'm',
-                                x: pos.x.toFixed(2),
-                                y: pos.y.toFixed(2),
+                                x: pos.x,
+                                y: pos.y,
                                 id: client.participantId
                             }])
                             client.user.x = pos.x
@@ -567,9 +590,31 @@ class Server {
                             if (!client.token)
                                 continue
                             let prevChannel = client.channel;
-                            client.channel = msg._id
                             let p = client.participantId
                             let ch = this.createChannel(msg._id, p, msg.set)
+                            if (ch.count >= ch.settings.limit) {
+                                if (!prevChannel) {
+                                    let lobbyNum = 2
+                                    while (this.getChannel(`lobby${lobbyNum}`)) {
+                                        lobbyNum += 1
+                                    }
+                                    ch = this.createChannel(`lobby${lobbyNum}`)
+                                    client.channel = ch
+                                } else {
+                                    client.sendArray([
+                                        {
+                                            m: 'notification',
+                                            duration: 7000,
+                                            target: '#room',
+                                            text: 'That room is currently full.',
+                                            class: 'short',
+                                            title: 'Notice'
+                                        }
+                                    ])
+                                    continue
+                                }
+                            } else
+                                client.channel = ch
                             let nqParams = ((): NoteQuotaParams => {
                                 if (this.findRankByToken(client.token) === 3)
                                     return NoteQuota.PARAMS_UNLIMITED
@@ -611,16 +656,86 @@ class Server {
                                 this.updateChannelCount(msg._id)
                             }
                             if (prevChannel) {
-                                if (this.getClientsForToken(client.token, prevChannel).length === 0) {
-                                    this.sendArrayChannel([client], prevChannel, [{
+                                if (this.getClientsForToken(client.token, prevChannel._id).length === 0) {
+                                    this.sendArrayChannel([client], prevChannel._id, [{
                                         m: 'bye',
                                         p
                                     }])
-                                    let prevChannelSettings = this.getChannel(prevChannel)
+                                    let prevChannelSettings = this.getChannel(prevChannel._id)
                                     if (prevChannelSettings)
-                                        this.updateChannelCount(prevChannel)
+                                        this.updateChannelCount(prevChannel._id)
                                 }
                             }   
+                            break
+                        case 'chown':
+                            if (!client.token)
+                                continue
+                            if (!client.channel)
+                                continue
+                            let channel = client.channel
+                            let clients = this.getClientsInChannel(client.channel._id)
+                            if (!msg.id) {
+                                this.dropCrown(client.channel)
+                            } else {
+                                if (!channel.crown.participantId) {
+                                    if (msg.id === client.participantId && Date.now() - channel.crown.time > 15000) {
+                                        channel.crown.participantId = client.participantId
+                                        channel.crown.userId = client.participantId
+                                        for (let c of clients) {
+                                            c.sendArray([
+                                                {
+                                                    m: 'ch',
+                                                    ch: channel,
+                                                    p: c.participantId,
+                                                    ppl: [...new Set(clients.map(c => c.user))],
+                                                }
+                                            ])
+                                        }
+                                    }
+                                } else {
+                                    if ((client.isOwner() || this.findRankByToken(client.token) >= 2) && msg.id !== client.participantId) {
+                                        if (clients.find(c => c.participantId === msg.id)) {
+                                            channel.crown.participantId = msg.id
+                                            channel.crown.userId = msg.id
+                                            for (let c of clients) {
+                                                c.sendArray([
+                                                    {
+                                                        m: 'ch',
+                                                        ch: channel,
+                                                        p: c.participantId,
+                                                        ppl: [...new Set(clients.map(c => c.user))],
+                                                    }
+                                                ])
+                                            }
+                                        }
+                                    }
+                                }
+
+                            }
+                            break
+                        case 'chset':
+                            if (!client.token)
+                                continue
+                            if (!client.channel)
+                                continue
+                            if (client.isOwner() || this.findRankByToken(client.token) >= 2) {
+                                Object.assign(this.getChannel(client.channel._id).settings, { 
+                                    ...msg.set, 
+                                    limit: Number.parseInt(msg.set.limit) 
+                                })
+                                client.channel = this.getChannel(client.channel._id)
+                                let clients = this.getClientsInChannel(client.channel._id)
+                                for (let c of clients) {
+                                    c.sendArray([
+                                        {
+                                            m: 'ch',
+                                            ch: client.channel,
+                                            p: c.participantId,
+                                            ppl: [...new Set(clients.map(c => c.user))],
+                                        }
+                                    ])
+                                }
+                            } else continue
                             break
                         case 'a':
                             if (!client.token)
@@ -638,8 +753,8 @@ class Server {
                                     t: Date.now(),
                                 }
                                 msg.reply_to ? message.r = msg.reply_to : void 0
-                                this.sendArrayChannel([], client.channel ?? 'lobby', [message])
-                                this.channelHistories[client.channel ?? 'lobby'].push(message)
+                                this.sendArrayChannel([], client.channel._id ?? 'lobby', [message])
+                                this.channelHistories[client.channel._id ?? 'lobby'].push(message)
                             } else {
                                 let dm: DirectMessage = {
                                     m: 'dm',
@@ -650,7 +765,7 @@ class Server {
                                     t: Date.now(),
                                 }
                                 client.sendArray([dm])
-                                this.channelHistories[client.channel ?? 'lobby'].push(dm)
+                                this.channelHistories[client.channel._id ?? 'lobby'].push(dm)
                                 this.handleServerCommand(dm)
                             }
                             break
@@ -676,7 +791,7 @@ class Server {
                             msg.reply_to ? dm.r = msg.reply_to : void 0
                             client.sendArray([dm])
                             recipient.sendArray([dm])
-                            this.channelHistories[client.channel ?? 'lobby'].push(dm)
+                            this.channelHistories[client.channel._id ?? 'lobby'].push(dm)
                             break
                         case 'n':
                             if (!client.token)
@@ -685,7 +800,7 @@ class Server {
                                 continue
                             if (!client.noteQuota.spend(msg.n.length))
                                 continue
-                            this.sendArrayChannel([client], client.channel ?? 'lobby', [{
+                            this.sendArrayChannel([client], client.channel._id ?? 'lobby', [{
                                 m: 'n',
                                 n: msg.n,
                                 p: client.participantId,
@@ -700,7 +815,7 @@ class Server {
                             if (!this.validate.hexColor(msg.set.color))
                                 continue
                             this.setUser(client.token, msg.set)
-                            this.sendArrayChannel([], client.channel ?? 'lobby', [{
+                            this.sendArrayChannel([], client.channel._id ?? 'lobby', [{
                                 m: 'p',
                                 ...client.user
                             }])
@@ -739,16 +854,18 @@ class Server {
                     return
                 if (!client.channel)
                     return
-                if (this.getClientsForToken(client.token, client.channel).length === 0) {
+                if (this.getClientsForToken(client.token, client.channel._id).length === 0) {
                     let input = JSON.parse(fs.readFileSync(this.options.paths.userDB, 'utf-8'))
                     let output = structuredClone(input)
                     output[client.token] = this.userDatabase[client.token]
                     fs.writeFileSync(this.options.paths.userDB, JSON.stringify(output, undefined, 4), 'utf-8')
-                    this.sendArrayChannel([client], client.channel, [{
+                    this.sendArrayChannel([client], client.channel._id, [{
                         m: 'bye',
                         p: client.user
                     }])
-                    this.updateChannelCount(client.channel)
+                    if (client.channel.crown)
+                        this.dropCrown(client.channel)
+                    this.updateChannelCount(client.channel._id)
                 }
             })
         })

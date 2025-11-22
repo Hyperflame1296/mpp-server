@@ -8,12 +8,14 @@ import { NoteQuota } from '../ratelimit/NoteQuota.js'
 import { Server } from '../server/Server.js'
 
 // import: local interfaces
+import { Channel } from '../../interfaces/channel/Channel.js'
 import { DirectMessage } from '../../interfaces/chat/DirectMessage.js'
 import { Participant } from '../../interfaces/participant/Participant.js'
+import { ParticipantModifier } from '../../interfaces/participant/ParticipantModifier.js'
 
 // import: constants
 import color from 'cli-color'
-import { ParticipantModifier } from '../../interfaces/participant/ParticipantModifier.js'
+
 /**
  * An MPP client, but from the server's perspective.
  */
@@ -26,10 +28,10 @@ class Client extends EventEmitter {
     chatQuota  : EventLimiter = new EventLimiter(10)
     cursorQuota: EventLimiter = new EventLimiter(20)
 
-    token: string
     modifier: ParticipantModifier
-    channel: string
+    channel: Channel
     participantId: string
+    token: string
     user: Participant
     
     subscriptions: string[] = []
@@ -59,6 +61,12 @@ class Client extends EventEmitter {
         }
         this.ws = ws
         this.parentServer = parentServer
+    }
+    /**
+     * Whether a client is the owner of the channel it's currently in
+     */
+    isOwner(): boolean {
+        return this.channel.crown?.participantId === this.participantId
     }
     /**
      * Sends a server message to this client,
@@ -115,6 +123,7 @@ class Client extends EventEmitter {
     }
     /**
      * Whether a client is subscribed to events that apply or not.
+     * @param type The event type to check.
      */
     subscribedTo(type: string): boolean {
         return this.subscriptions.includes(type)
